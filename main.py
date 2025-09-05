@@ -1,8 +1,6 @@
 import nvdlib
 from datetime import datetime, timezone
 
-
-
 pubStartDate = "2025-08-01 00:00"
 pubEndDate   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
 
@@ -22,15 +20,15 @@ for cpe in cpe_list:
     try:
         results = nvdlib.searchCVE(
             cpeName=cpe,
-            cvssV3Severity='CRITICAL',
             pubStartDate=pubStartDate,
             pubEndDate=pubEndDate,
-            limit=20
+            limit=50   # tăng limit để không bị cắt bớt
         )
         for cve in results:
             score = cve.score[2] if cve.score else "N/A"
             desc = cve.descriptions[0].value if cve.descriptions else "No description"
-            all_results.append(f"{cve.id}: {score} - {desc} (CPE={cpe})")
+            severity = cve.score[0] if cve.score else "UNKNOWN"
+            all_results.append(f"{cve.id}: {severity} ({score}) - {desc} (CPE={cpe})")
     except Exception as e:
         print(f"Lỗi khi lấy dữ liệu {cpe}: {e}")
 
@@ -40,4 +38,3 @@ for item in all_results:
 
 if not all_results:
     print("⚠️ Không có CVE nào phù hợp (có thể do bộ lọc quá hẹp hoặc chưa có CVE mới).")
-
