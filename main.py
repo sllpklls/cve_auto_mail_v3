@@ -220,12 +220,13 @@ Báo cáo tự động từ CVE Monitor System"""
     
     return subject, email_body
 
-def create_json_attachment(cve_data):
-    """Tạo file JSON attachment"""
-    # Convert set to list để JSON serialize được
-    json_data = {}
+def create_json_attachments(cve_data):
+    """Tạo 2 file JSON riêng cho Windows và Red Hat"""
+    windows_json = {}
+    redhat_json = {}
+
     for cve_id, data in cve_data.items():
-        json_data[cve_id] = {
+        entry = {
             "severity": data["severity"],
             "score": data["score"],
             "description": data["desc"],
@@ -234,48 +235,63 @@ def create_json_attachment(cve_data):
             "created": data.get("created", "N/A"),
             "updated": data.get("updated", "N/A")
         }
-    
-    filename = f"cve_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(json_data, f, indent=2, ensure_ascii=False)
-    
-    return filename
 
-def send_email(subject, body, attachment_path=None):
-    """Gửi email qua Gmail SMTP"""
+        if "NVD" in data["source"]:
+            windows_json[cve_id] = entry
+        if "Red Hat" in data["source"]:
+            redhat_json[cve_id] = entry
+
+    files = []
+
+    if windows_json:
+        win_filename = f"cve_windows_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(win_filename, 'w', encoding='utf-8') as f:
+            json.dump(windows_json, f, indent=2, ensure_ascii=False)
+        files.append(win_filename)
+
+    if redhat_json:
+        rh_filename = f"cve_redhat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        with open(rh_filename, 'w', encoding='utf-8') as f:
+            json.dump(redhat_json, f, indent=2, ensure_ascii=False)
+        files.append(rh_filename)
+
+    return files
+
+def send_email(subject, body, attachments=None):
+    """Gửi email qua Gmail SMTP (1 email kèm nhiều file)"""
     try:
-        # Tạo email message
         msg = MIMEMultipart()
         msg['From'] = GMAIL_USER
         msg['To'] = ", ".join(RECIPIENTS)
         msg['Subject'] = subject
-        
+
         # Thêm body email
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
-        
-        # Thêm attachment nếu có
-        if attachment_path and os.path.exists(attachment_path):
-            with open(attachment_path, "rb") as attachment:
-                part = MIMEBase('application', 'octet-stream')
-                part.set_payload(attachment.read())
-                encoders.encode_base64(part)
-                part.add_header(
-                    'Content-Disposition',
-                    f'attachment; filename= {os.path.basename(attachment_path)}'
-                )
-                msg.attach(part)
-        
-        # Kết nối SMTP và gửi email
+
+        # Đính kèm nhiều file nếu có
+        if attachments:
+            for file_path in attachments:
+                if os.path.exists(file_path):
+                    with open(file_path, "rb") as attachment:
+                        part = MIMEBase('application', 'octet-stream')
+                        part.set_payload(attachment.read())
+                        encoders.encode_base64(part)
+                        part.add_header(
+                            'Content-Disposition',
+                            f'attachment; filename={os.path.basename(file_path)}'
+                        )
+                        msg.attach(part)
+
+        # Gửi mail
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(GMAIL_USER, GMAIL_PASSWORD)
-        text = msg.as_string()
-        server.sendmail(GMAIL_USER, RECIPIENTS, text)
+        server.sendmail(GMAIL_USER, RECIPIENTS, msg.as_string())
         server.quit()
-        
+
         print("✅ Email đã được gửi thành công!")
         return True
-        
+
     except Exception as e:
         print(f"❌ Lỗi khi gửi email: {e}")
         return False
@@ -318,31 +334,24 @@ else:
 # ================= GỬI EMAIL =================
 if GMAIL_USER != "your_email@gmail.com" and GMAIL_PASSWORD != "your_app_password":
     print(f"\n📧 Đang chuẩn bị gửi email...")
-    
-    # Tạo nội dung email
+
     subject, email_body = create_email_content(cve_dict, windows_cve_found, redhat_cve_found)
-    
-    # Tạo file JSON attachment
-    json_filename = None
+
+    # Tạo file JSON
+    attachments = []
     if cve_dict:
-        json_filename = create_json_attachment(cve_dict)
-        print(f"📎 Đã tạo file attachment: {json_filename}")
-    
-    # Gửi email
-    success = send_email(subject, email_body, json_filename)
-    
-    # Xóa file JSON sau khi gửi (tuỳ chọn)
-    if json_filename and os.path.exists(json_filename):
-        try:
-            os.remove(json_filename)
-            print(f"🗑️ Đã xóa file tạm: {json_filename}")
-        except:
-            print(f"⚠️ Không thể xóa file tạm: {json_filename}")
-            
-else:
-    print(f"\n⚠️ Chưa cấu hình email. Vui lòng cập nhật GMAIL_USER và GMAIL_PASSWORD để gửi email tự động.")
-    print("💡 Hướng dẫn:")
-    print("   1. Thay 'your_email@gmail.com' bằng email Gmail của bạn")
-    print("   2. Tạo App Password tại: https://myaccount.google.com/apppasswords")
-    print("   3. Thay 'your_app_password' bằng App Password vừa tạo")
-    print("   4. Cập nhật danh sách RECIPIENTS")
+        attachments = create_json_attachments(cve_dict)
+        for f in attachments:
+            print(f"📎 Đã tạo file attachment: {f}")
+
+    # 👉 Gửi email kèm nhiều file trong 1 mail duy nhất
+    send_email(subject, email_body, attachments)
+
+    # Xóa file sau khi gửi
+    for f in attachments:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+                print(f"🗑️ Đã xóa file tạm: {f}")
+            except:
+                print(f"⚠️ Không thể xóa file tạm: {f}")
