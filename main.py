@@ -11,12 +11,9 @@ from email import encoders
 
 # ================= CẤU HÌNH EMAIL =================
 # Cài đặt Gmail - Cần tạo App Password trong Google Account
-GMAIL_USER = "automationmailvtb@gmail.com"  # Email gửi
-GMAIL_PASSWORD = "cuuy ephf bxzu bjvi"  # App Password (không phải mật khẩu thường)
-RECIPIENTS = [
-    "hoangthaifc01@gmail.com",
-    "ldhoang@vietinbank.vn"
-]  # Danh sách email nhận
+GMAIL_USER = os.environ.get("GMAIL_USER", "your_email@gmail.com")  # Email gửi
+GMAIL_PASSWORD = os.environ.get("GMAIL_PASSWORD", "your_app_password")  # App Password (không phải mật khẩu thường)
+RECIPIENTS = os.environ.get("RECIPIENTS", "hoangthaifc01@gmail.com,ldhoang@vietinbank.vn").split(",")  # Danh sách email nhận
 
 # ================= CẤU HÌNH CVE =================
 # Thời gian
