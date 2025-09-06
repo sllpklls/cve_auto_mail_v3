@@ -15,7 +15,7 @@ GMAIL_USER = "automationmailvtb@gmail.com"  # Email gửi
 GMAIL_PASSWORD = "cuuy ephf bxzu bjvi"  # App Password (không phải mật khẩu thường)
 RECIPIENTS = [
     "hoangthaifc01@gmail.com",
-    "hoangnghiathai.01@company.com"
+    "ldhoang@vietinbank.vn"
 ]  # Danh sách email nhận
 
 # ================= CẤU HÌNH CVE =================
