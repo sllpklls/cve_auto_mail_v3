@@ -20,9 +20,9 @@ RECIPIENTS = [
 
 # ================= CẤU HÌNH CVE =================
 # Thời gian
-pubStartDate = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
+pubStartDate = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d %H:%M")
 pubEndDate   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-after_date   = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+after_date   = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d")
 
 # Chọn mức độ CVE muốn lấy: CRITICAL, HIGH, MEDIUM, LOW, ALL
 severity_filter = "ALL"
@@ -113,7 +113,12 @@ try:
         
         for item in redhat_cves:
             cve_id = item.get("CVE")
-            severity = item.get("severity", "UNKNOWN")
+            severity = item.get("severity", "UNKNOWN").upper()
+
+            # 👉 Chỉ giữ lại important và critical
+            if severity not in ["IMPORTANT", "CRITICAL"]:
+                continue  
+
             desc = item.get("bugzilla_description") or \
                    (item.get("details", ["No description"])[0] if item.get("details") else "No description")
             score = item.get("cvss3_score") or item.get("cvss_score") or "N/A"
@@ -136,16 +141,15 @@ try:
             cve_dict[cve_id]["source"].add("Red Hat")
         
         if redhat_cve_found:
-            print(f"  ✅ Red Hat: {redhat_count} CVE mới")
+            print(f"  ✅ Red Hat: {redhat_count} CVE (Important/Critical)")
         else:
-            print("  🎉 Red Hat: Không có CVE nào!")
+            print("  🎉 Red Hat: Không có CVE Important/Critical nào!")
 
     else:
         print(f"  ❌ Lỗi khi gọi API Red Hat: HTTP {resp.status_code}")
 
 except Exception as e:
     print(f"  ❌ Lỗi khi lấy dữ liệu từ Red Hat API: {e}")
-
 # ================= TẠO EMAIL CONTENT =================
 def create_email_content(cve_data, windows_found, redhat_found):
     """Tạo nội dung email theo format yêu cầu"""
