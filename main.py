@@ -1,7 +1,24 @@
 import nvdlib
 from datetime import datetime, timezone, timedelta
 import requests
+import smtplib
+import json
+import os
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 
+# ================= CẤU HÌNH EMAIL =================
+# Cài đặt Gmail - Cần tạo App Password trong Google Account
+GMAIL_USER = "automationmailvtb@gmail.com"  # Email gửi
+GMAIL_PASSWORD = "cuuy ephf bxzu bjvi"  # App Password (không phải mật khẩu thường)
+RECIPIENTS = [
+    "hoangthaifc01@gmail.com",
+    "hoangnghiathai.01@company.com"
+]  # Danh sách email nhận
+
+# ================= CẤU HÌNH CVE =================
 # Thời gian
 pubStartDate = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d %H:%M")
 pubEndDate   = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -58,7 +75,9 @@ for cpe, short_name in cpe_map.items():
                     "score": score,
                     "desc": desc,
                     "affected": set(),
-                    "source": set()
+                    "source": set(),
+                    "created": getattr(cve, 'published', 'N/A'),
+                    "updated": getattr(cve, 'lastModified', 'N/A')
                 }
                 windows_cve_found = True  # Đánh dấu đã tìm thấy CVE Windows
                 cve_count_for_this_version += 1
@@ -106,7 +125,9 @@ try:
                     "score": score,
                     "desc": desc,
                     "affected": set(),
-                    "source": set()
+                    "source": set(),
+                    "created": public_date or "N/A",
+                    "updated": public_date or "N/A"
                 }
                 redhat_count += 1
                 redhat_cve_found = True
@@ -125,7 +146,137 @@ try:
 except Exception as e:
     print(f"  ❌ Lỗi khi lấy dữ liệu từ Red Hat API: {e}")
 
-# ------------------- In kết quả -------------------
+# ================= TẠO EMAIL CONTENT =================
+def create_email_content(cve_data, windows_found, redhat_found):
+    """Tạo nội dung email theo format yêu cầu"""
+    
+    current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    filter_date = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    
+    # Đếm CVE Windows và Red Hat riêng biệt
+    windows_cves = [cve_id for cve_id, data in cve_data.items() if "NVD" in data["source"]]
+    redhat_cves = [cve_id for cve_id, data in cve_data.items() if "Red Hat" in data["source"]]
+    
+    subject = f"CVE Report - {len(windows_cves)} Windows CVE, {len(redhat_cves)} Red Hat CVE - {filter_date}"
+    
+    email_body = f"""Xin chào,
+
+Microsoft CVE: {len(windows_cves)} CVE từ hôm qua
+Red Hat CVE: {len(redhat_cves)} CVE từ hôm qua
+
+"""
+    
+    # Hiển thị top 10 CVE Windows
+    if windows_cves:
+        email_body += "=== TOP WINDOWS CVE ===\n"
+        count = 1
+        for cve_id in sorted(windows_cves)[:10]:
+            data = cve_data[cve_id]
+            created = data.get('created', 'N/A')
+            updated = data.get('updated', 'N/A')
+            desc = data['desc'][:80] + "..." if len(data['desc']) > 80 else data['desc']
+            
+            email_body += f"{count}. {cve_id} | Created: {created} | Updated: {updated}\n"
+            email_body += f"    {desc}\n\n"
+            count += 1
+        
+        if len(windows_cves) > 10:
+            email_body += f"    ... và {len(windows_cves) - 10} CVE khác (xem file JSON)\n\n"
+    
+    # Hiển thị top 10 CVE Red Hat
+    if redhat_cves:
+        email_body += "=== TOP RED HAT CVE ===\n"
+        count = 1
+        for cve_id in sorted(redhat_cves)[:10]:
+            data = cve_data[cve_id]
+            created = data.get('created', 'N/A')
+            updated = data.get('updated', 'N/A')
+            desc = data['desc'][:80] + "..." if len(data['desc']) > 80 else data['desc']
+            
+            email_body += f"{count}. {cve_id} | Created: {created} | Updated: {updated}\n"
+            email_body += f"    {desc}\n\n"
+            count += 1
+        
+        if len(redhat_cves) > 10:
+            email_body += f"    ... và {len(redhat_cves) - 10} CVE khác (xem file JSON)\n\n"
+    
+    if not windows_found and not redhat_found:
+        email_body += "🎉 Không có CVE mới nào trong khoảng thời gian này!\n\n"
+    
+    email_body += f"""Thời gian tạo báo cáo: {current_time}
+Nguồn dữ liệu: NVD (nvd.nist.gov) và Red Hat Security Data API
+Ngày lọc: {filter_date}
+
+Chi tiết đầy đủ vui lòng xem file JSON đính kèm.
+
+Vui lòng không reply email này, nếu có thắc mắc vui lòng liên hệ Hoàng Thái - hoangnghiathai.01@gmail.com
+
+---
+Báo cáo tự động từ CVE Monitor System"""
+    
+    return subject, email_body
+
+def create_json_attachment(cve_data):
+    """Tạo file JSON attachment"""
+    # Convert set to list để JSON serialize được
+    json_data = {}
+    for cve_id, data in cve_data.items():
+        json_data[cve_id] = {
+            "severity": data["severity"],
+            "score": data["score"],
+            "description": data["desc"],
+            "affected_systems": list(data["affected"]),
+            "sources": list(data["source"]),
+            "created": data.get("created", "N/A"),
+            "updated": data.get("updated", "N/A")
+        }
+    
+    filename = f"cve_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(json_data, f, indent=2, ensure_ascii=False)
+    
+    return filename
+
+def send_email(subject, body, attachment_path=None):
+    """Gửi email qua Gmail SMTP"""
+    try:
+        # Tạo email message
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = ", ".join(RECIPIENTS)
+        msg['Subject'] = subject
+        
+        # Thêm body email
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+        
+        # Thêm attachment nếu có
+        if attachment_path and os.path.exists(attachment_path):
+            with open(attachment_path, "rb") as attachment:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(attachment.read())
+                encoders.encode_base64(part)
+                part.add_header(
+                    'Content-Disposition',
+                    f'attachment; filename= {os.path.basename(attachment_path)}'
+                )
+                msg.attach(part)
+        
+        # Kết nối SMTP và gửi email
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(GMAIL_USER, GMAIL_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(GMAIL_USER, RECIPIENTS, text)
+        server.quit()
+        
+        print("✅ Email đã được gửi thành công!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Lỗi khi gửi email: {e}")
+        return False
+
+# ------------------- In kết quả Console -------------------
 print(f"\n📈 KẾT QUẢ TỔNG HỢP")
 print("="*60)
 
@@ -156,31 +307,38 @@ if cve_dict:
     
     print(f"🎯 Tổng cộng: {len(cve_dict)} CVE")
     
-    # Thống kê theo độ nghiêm trọng
-    severity_stats = {}
-    for data in cve_dict.values():
-        severity = data["severity"]
-        severity_stats[severity] = severity_stats.get(severity, 0) + 1
-    
-    print("\n📊 Thống kê theo độ nghiêm trọng:")
-    for severity, count in sorted(severity_stats.items(), 
-                                 key=lambda x: severity_order.get(x[0], 5)):
-        emoji = severity_emoji.get(severity, "⚪")
-        print(f"   {emoji} {severity}: {count} CVE")
-        
-    # Thống kê theo nguồn
-    print("\n📊 Thống kê theo nguồn:")
-    windows_only = sum(1 for data in cve_dict.values() if "NVD" in data["source"] and len(data["source"]) == 1)
-    redhat_only = sum(1 for data in cve_dict.values() if "Red Hat" in data["source"] and len(data["source"]) == 1)
-    both_sources = sum(1 for data in cve_dict.values() if len(data["source"]) > 1)
-    
-    if windows_cve_found:
-        print(f"   🖥️ Chỉ Windows (NVD): {windows_only} CVE")
-    if redhat_cve_found:
-        print(f"   🐧 Chỉ Red Hat: {redhat_only} CVE") 
-    if both_sources > 0:
-        print(f"   🔄 Cả hai nguồn: {both_sources} CVE")
-    
 else:
     print("🎉 Tuyệt vời! Không có CVE nghiêm trọng nào trong khoảng thời gian này!")
     print("🔒 Hệ thống hiện tại an toàn từ các lỗ hổng mới.")
+
+# ================= GỬI EMAIL =================
+if GMAIL_USER != "your_email@gmail.com" and GMAIL_PASSWORD != "your_app_password":
+    print(f"\n📧 Đang chuẩn bị gửi email...")
+    
+    # Tạo nội dung email
+    subject, email_body = create_email_content(cve_dict, windows_cve_found, redhat_cve_found)
+    
+    # Tạo file JSON attachment
+    json_filename = None
+    if cve_dict:
+        json_filename = create_json_attachment(cve_dict)
+        print(f"📎 Đã tạo file attachment: {json_filename}")
+    
+    # Gửi email
+    success = send_email(subject, email_body, json_filename)
+    
+    # Xóa file JSON sau khi gửi (tuỳ chọn)
+    if json_filename and os.path.exists(json_filename):
+        try:
+            os.remove(json_filename)
+            print(f"🗑️ Đã xóa file tạm: {json_filename}")
+        except:
+            print(f"⚠️ Không thể xóa file tạm: {json_filename}")
+            
+else:
+    print(f"\n⚠️ Chưa cấu hình email. Vui lòng cập nhật GMAIL_USER và GMAIL_PASSWORD để gửi email tự động.")
+    print("💡 Hướng dẫn:")
+    print("   1. Thay 'your_email@gmail.com' bằng email Gmail của bạn")
+    print("   2. Tạo App Password tại: https://myaccount.google.com/apppasswords")
+    print("   3. Thay 'your_app_password' bằng App Password vừa tạo")
+    print("   4. Cập nhật danh sách RECIPIENTS")
